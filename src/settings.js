@@ -6,13 +6,13 @@ export const DEFAULT_SETTINGS = {
   teacherId: null,
   currency: 'UZS',
   // Default pay per category. Group: per paid student per lesson.
-  // Individual: per student per month, split across the month's lessons.
+  // Individual: per student for a package of `packageLessons` lessons.
   rates: { group: 15000, individual: 1250000 },
-  modes: { group: 'per_student', individual: 'monthly' },
+  modes: { group: 'per_student', individual: 'package' },
   // Group rate grows by `amount` every `everyMonths` months since `since` (YYYY-MM-DD).
   groupRaise: { amount: 500, everyMonths: 6, since: '' },
-  // Lessons per month used to split monthly pay; 0 = the group's actual lessons that month.
-  monthlyDivisor: 0,
+  // How many lessons the individual rate pays for (1,250,000 per 12 lessons by default).
+  packageLessons: 12,
   // Which student-days earn money:
   //  'payable'  – whatever HolliHop marks as payable to the teacher (default)
   //  'attended' – only students who actually attended
@@ -63,9 +63,10 @@ export class SettingsStore {
 }
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
-const MODES = new Set(['per_student', 'monthly', 'per_lesson', 'per_hour', 'none']);
+const MODES = new Set(['per_student', 'package', 'per_lesson', 'per_hour', 'none']);
 const isoDate = (v) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : '');
-const modeOr = (v, d) => (MODES.has(v) ? v : d);
+// 'monthly' was the previous name of 'package'.
+const modeOr = (v, d) => (v === 'monthly' ? 'package' : MODES.has(v) ? v : d);
 const CATEGORIES = new Set(['group', 'individual']);
 
 function sanitize(s) {
@@ -82,7 +83,7 @@ function sanitize(s) {
       everyMonths: Math.max(1, Math.round(num(s.groupRaise?.everyMonths, DEFAULT_SETTINGS.groupRaise.everyMonths))),
       since: isoDate(s.groupRaise?.since),
     },
-    monthlyDivisor: Math.max(0, Math.round(num(s.monthlyDivisor))),
+    packageLessons: Math.max(0, Math.round(num(s.packageLessons))) || DEFAULT_SETTINGS.packageLessons,
     basis: s.basis === 'attended' ? 'attended' : 'payable',
     individualPattern: typeof s.individualPattern === 'string' ? s.individualPattern.slice(0, 200) : DEFAULT_SETTINGS.individualPattern,
     unitOverrides: {},
@@ -92,7 +93,7 @@ function sanitize(s) {
   for (const [id, o] of Object.entries(s.unitOverrides || {})) {
     const clean = {};
     if (CATEGORIES.has(o?.category)) clean.category = o.category;
-    if (MODES.has(o?.mode)) clean.mode = o.mode;
+    if (o?.mode && modeOr(o.mode, null)) clean.mode = modeOr(o.mode, null);
     if (o?.rate !== undefined && o?.rate !== null && o?.rate !== '') clean.rate = num(o.rate);
     if (Object.keys(clean).length) out.unitOverrides[id] = clean;
   }

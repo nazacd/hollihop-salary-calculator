@@ -19,14 +19,14 @@ Switch months with the arrows, or with the ← / → keys.
 Defaults (all editable in **Settings**):
 
 - **Group lessons**: 15,000 UZS per paid student per lesson, plus **500 UZS every 6 months** from the date you became a group teacher. That date is suggested from HolliHop: it's the first regular (not one-day substitution) schedule of yours in a group. The raise is applied per lesson date, so lessons from the raise day onwards use the new rate.
-- **Individual lessons**: 1,250,000 UZS per student per month, split across the month's lessons. In a pair, each student pays this. The default divisor is the number of lessons the group's weekly schedule gives that month (e.g. Tue/Thu/Sat in September 2026 = 13), or the actual number of lessons if there were more. You can set a fixed number instead (e.g. 12). If you teach every lesson and the student is paid for all of them, you get exactly 1,250,000. Lessons a colleague covered, and months where the student joined or left part-way, pay proportionally less.
+- **Individual lessons**: 1,250,000 UZS per student for a package of **12 lessons**, so each paid lesson earns 104,167 UZS per student, however many lessons the month has. In a pair, each student counts separately. Both the price and the package size can be changed.
 
 Any group can be overridden with its own type, pay mode and rate:
 
 | Pay mode | Amount per lesson |
 | --- | --- |
 | Student × lesson | `rate (+ raise) × paid students` |
-| Monthly / student | `rate ÷ lessons in month × paid students` |
+| Package / student | `rate ÷ lessons in package × paid students` |
 | Per lesson | `rate` (if at least one student is paid) |
 | Per hour | `rate × lesson minutes / 60` |
 | Not paid | `0` |

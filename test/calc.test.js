@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { computeMonth, categoryOf, lessonPay, unitRule, groupRaise, monthsBetween } from '../public/calc.js';
-import { monthRange, scheduledLessonsInMonth } from '../src/month.js';
+import { monthRange } from '../src/month.js';
 
 const settings = (over = {}) => ({
   currency: 'UZS',
@@ -131,38 +131,27 @@ test('group rate rises by 500 every 6 months from the start date', () => {
   assert.equal(lessonPay(lesson('2027-10-22'), unitRule(month.units[0], custom), custom).amount, 40_000);
 });
 
-test('individual monthly pay is split across the month\'s lessons', () => {
-  const s = settings({ rates: { group: 15_000, individual: 1_250_000 }, modes: { group: 'per_student', individual: 'monthly' } });
-  const unit = { ...month.units[1], lessonsInMonth: 13 };
-  const rule = unitRule(unit, s);
-  assert.equal(rule.mode, 'monthly');
-  const pair = { ...month.lessons[3], students: [st(12), st(13)] };
-  assert.equal(lessonPay(pair, rule, s).amount, Math.round((2 * 1_250_000 * 100) / 13) / 100);
+test('individual pay: 1,250,000 per student for a package of 12 lessons', () => {
+  const s = settings({ rates: { group: 15_000, individual: 1_250_000 }, modes: { group: 'per_student', individual: 'package' }, packageLessons: 12 });
+  const rule = unitRule(month.units[1], s);
+  assert.equal(rule.mode, 'package');
+  const perLesson = Math.round((1_250_000 * 100) / 12) / 100;
+  assert.equal(lessonPay(month.lessons[3], rule, s).amount, perLesson);
 
-  // All 13 lessons taught and paid → exactly the monthly amount per student.
+  // Pairs: each paid student counts; an excused absence doesn't.
+  const pair = { ...month.lessons[3], students: [st(12), st(13), st(14, { absent: true })] };
+  assert.equal(lessonPay(pair, rule, s).amount, Math.round((2 * 1_250_000 * 100) / 12) / 100);
+
+  // 12 paid lessons in a month → exactly one package, regardless of month length.
   const m = {
     ...month,
-    units: [unit],
+    units: [month.units[1]],
     students: [month.students[2]],
-    lessons: Array.from({ length: 13 }, (_, i) => ({ unitId: 2, date: `2026-09-${String(i + 1).padStart(2, '0')}`, minutes: 90, status: 'taught', students: [st(12)] })),
+    lessons: Array.from({ length: 12 }, (_, i) => ({ unitId: 2, date: `2026-09-${String(i + 1).padStart(2, '0')}`, minutes: 90, status: 'taught', students: [st(12)] })),
   };
   assert.ok(Math.abs(computeMonth(m, s).totals.earned - 1_250_000) < 1);
 
-  // A fixed divisor overrides the actual lesson count.
-  const fixed = settings({ ...s, monthlyDivisor: 12 });
-  assert.equal(lessonPay(month.lessons[3], unitRule(unit, fixed), fixed).amount, Math.round((1_250_000 * 100) / 12) / 100);
-});
-
-test('scheduledLessonsInMonth uses the main weekly pattern for the whole month', () => {
-  // Tue/Thu/Sat (2+8+32) in September 2026: 5 Tue + 4 Thu + 4 Sat
-  assert.equal(scheduledLessonsInMonth([{ BeginDate: '2026-09-18', Weekdays: 42 }], '2026-09-01', '2026-09-30'), 13);
-  // Group that ended on 9 Sep still divides by its full-month pattern (Tue/Sat = 9)
-  assert.equal(scheduledLessonsInMonth([{ BeginDate: '2026-09-04', EndDate: '2026-09-09', Weekdays: 34 }], '2026-09-01', '2026-09-30'), 9);
-  // One-day substitution entries don't win over the regular schedule
-  const items = [
-    { BeginDate: '2026-08-21', Weekdays: 21 },
-    { BeginDate: '2026-09-15', EndDate: '2026-09-15', Weekdays: 2 },
-  ];
-  assert.equal(scheduledLessonsInMonth(items, '2026-09-01', '2026-09-30'), 13);
-  assert.equal(scheduledLessonsInMonth([], '2026-09-01', '2026-09-30'), 0);
+  // Package size is configurable.
+  const eight = settings({ ...s, packageLessons: 8 });
+  assert.equal(lessonPay(month.lessons[3], unitRule(month.units[1], eight), eight).amount, 156_250);
 });

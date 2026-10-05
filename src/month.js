@@ -21,30 +21,6 @@ function teacherNamesOf(item) {
   return item.Teacher ? [item.Teacher] : [];
 }
 
-// How many lessons the unit's main weekly schedule gives in [from, to]. The main schedule is the
-// item covering most of the month, so a group that starts or ends mid-month still uses its full
-// weekly pattern (and one-off substitution entries are ignored).
-export function scheduledLessonsInMonth(items, from, to) {
-  let main = null;
-  let best = 0;
-  for (const it of items) {
-    const start = it.BeginDate > from ? it.BeginDate : from;
-    const end = it.EndDate && it.EndDate < to ? it.EndDate : to;
-    const overlap = start <= end ? daysBetween(start, end) + 1 : 0;
-    if (overlap > 0 && overlap >= best) {
-      best = overlap;
-      main = it;
-    }
-  }
-  if (!main?.Weekdays) return 0;
-  let count = 0;
-  for (let d = new Date(`${from}T00:00:00Z`); d.toISOString().slice(0, 10) <= to; d.setUTCDate(d.getUTCDate() + 1)) {
-    // HolliHop weekday mask: Mon=1, Tue=2 … Sun=64
-    if (main.Weekdays & (1 << ((d.getUTCDay() + 6) % 7))) count++;
-  }
-  return count;
-}
-
 function daysBetween(a, b) {
   return Math.round((Date.parse(b) - Date.parse(a)) / 86_400_000);
 }
@@ -104,12 +80,6 @@ export async function buildMonth(api, { teacherId, year, month, fresh = false })
       studentsCount: mine.StudentsCount,
       assignee: mine.Assignee?.FullName,
       isCover,
-      // Lessons per month used to split monthly pay: what the regular weekly schedule gives this
-      // month, or the actual (non-cancelled) lessons if there were more.
-      lessonsInMonth: Math.max(
-        scheduledLessonsInMonth(full.ScheduleItems ?? [], from, to),
-        (full.Days ?? []).filter((d) => !d.Pass).length,
-      ),
       schedule: (mine.ScheduleItems ?? []).map((s) => ({
         beginDate: s.BeginDate,
         endDate: s.EndDate,

@@ -567,7 +567,7 @@ function renderGroups(el) {
   const s = state.settings;
   el.innerHTML = `
     <div class="banner" style="background:var(--accent-soft);border-color:transparent">
-      <span>Group lessons: <b>${ruleText(defaultRule('group'), raw().to)}</b>. Individual: <b>${money(s.rates.individual)}</b> per student per month, split across the month's lessons. You can override any group below.</span>
+      <span>Group lessons: <b>${ruleText(defaultRule('group'), raw().to)}</b>. Individual: <b>${ruleText(defaultRule('individual'), raw().to)}</b>. You can override any group below.</span>
       <button class="btn sm" data-goto="settings">Change defaults</button>
     </div>
     ${c.units.length ? '' : '<div class="card empty-state">No groups this month.</div>'}
@@ -619,7 +619,7 @@ function weekdaysText(mask) {
 
 const RATE_LABEL = {
   per_student: 'Per paid student, per lesson',
-  monthly: 'Per student, per month',
+  package: `Per student, per ${state.settings?.packageLessons ?? 12} lessons`,
   per_lesson: 'Per lesson',
   per_hour: 'Per hour',
 };
@@ -627,7 +627,7 @@ const RATE_LABEL = {
 const unitOf = (id) => state.calc?.units.find((u) => String(u.id) === String(id)) ?? { id };
 
 function defaultRule(category) {
-  return unitRule({ id: '__default__', type: category === 'individual' ? 'Individual' : 'Group', lessonsInMonth: 0 }, {
+  return unitRule({ id: '__default__', type: category === 'individual' ? 'Individual' : 'Group' }, {
     ...state.settings,
     individualPattern: '',
   });
@@ -640,10 +640,8 @@ function ruleText(rule, date) {
       const raise = rule.raise ? groupRaise(date, state.settings) : 0;
       return `${money(rule.rate + raise)} per paid student / lesson${raise ? ` (${money(rule.rate)} + ${money(raise)} raise)` : ''}`;
     }
-    case 'monthly':
-      return rule.lessonsInMonth
-        ? `${money(rule.rate)} / month ÷ ${rule.lessonsInMonth} lessons = ${money(studentRate(rule, date, state.settings))} per paid student / lesson`
-        : `${money(rule.rate)} per student / month`;
+    case 'package':
+      return `${money(rule.rate)} per ${rule.packageLessons} lessons = ${money(studentRate(rule, date, state.settings))} per paid student / lesson`;
     case 'per_lesson':
       return `${money(rule.rate)} per lesson`;
     case 'per_hour':
@@ -773,14 +771,13 @@ function renderSettings(el) {
     <div class="card">
       <h2>Individual lessons</h2>
       <div class="form-grid">
-        <div class="field"><label for="rateInd">Monthly pay per student</label>
+        <div class="field"><label for="rateInd">Pay per student, per package</label>
           <input class="input" id="rateInd" data-setting="rates.individual" type="number" min="0" step="any" value="${s.rates.individual}">
-          <span class="hint">Split evenly across the month's lessons. Pairs pay this for each student.</span></div>
-        <div class="field"><label for="divisor">Lessons per month to divide by</label>
-          <input class="input" id="divisor" data-setting="monthlyDivisor" type="number" min="0" step="1" placeholder="Auto" value="${s.monthlyDivisor || ''}">
-          <span class="hint">Leave empty to use the lessons each group's weekly schedule gives that month (e.g. Tue/Thu/Sat in September = 13), or the actual lessons if there were more.</span></div>
+          <span class="hint">In pairs, each student counts separately.</span></div>
+        <div class="field"><label for="packageLessons">Lessons in a package</label>
+          <input class="input" id="packageLessons" data-setting="packageLessons" type="number" min="1" step="1" value="${s.packageLessons}">
+          <span class="hint">Every paid lesson earns ${money(s.rates.individual / (s.packageLessons || 12))} per student.</span></div>
       </div>
-      ${individualExampleHtml()}
     </div>
     <div class="card">
       <h2>General</h2>
@@ -841,12 +838,6 @@ function raiseSummaryHtml() {
   }`;
 }
 
-function individualExampleHtml() {
-  const units = (state.calc?.units ?? []).filter((u) => u.rule.mode === 'monthly' && u.rule.lessonsInMonth);
-  if (!units.length) return '';
-  return `<div class="small muted" style="margin-top:14px">In ${MONTHS[state.month - 1]}:
-    <ul style="margin:4px 0 0;padding-left:18px">${units.map((u) => `<li>${esc(shortName(u))}: ${ruleText(u.rule, raw().to)}</li>`).join('')}</ul></div>`;
-}
 
 // ---------------------------------------------------------------- modal & teacher picker
 function openModal(html) {

@@ -2,13 +2,13 @@
 
 export const MODES = {
   per_student: 'Student × lesson',
-  monthly: 'Monthly / student',
+  package: 'Package / student',
   per_lesson: 'Per lesson',
   per_hour: 'Per hour',
   none: 'Not paid',
 };
 
-export const DEFAULT_MODES = { group: 'per_student', individual: 'monthly' };
+export const DEFAULT_MODES = { group: 'per_student', individual: 'package' };
 
 export function categoryOf(unit, settings) {
   const override = settings.unitOverrides?.[unit.id]?.category;
@@ -27,14 +27,14 @@ export function categoryOf(unit, settings) {
 export function unitRule(unit, settings) {
   const o = settings.unitOverrides?.[unit.id] ?? {};
   const category = categoryOf(unit, settings);
-  const fixedDivisor = Number(settings.monthlyDivisor) || 0;
   return {
     category,
     mode: o.mode ?? settings.modes?.[category] ?? DEFAULT_MODES[category],
     rate: o.rate ?? settings.rates?.[category] ?? 0,
     // The seniority raise only applies to the default group rate, not to a custom per-group rate.
     raise: category === 'group' && o.rate === undefined,
-    lessonsInMonth: fixedDivisor || unit.lessonsInMonth || 0,
+    // Package mode: `rate` buys this many lessons per student.
+    packageLessons: Number(settings.packageLessons) || 12,
     custom: o.mode !== undefined || o.rate !== undefined,
   };
 }
@@ -54,10 +54,10 @@ export function groupRaise(date, settings) {
   return months <= 0 ? 0 : Math.floor(months / r.everyMonths) * r.amount;
 }
 
-// What one paid student is worth in one lesson (per_student / monthly modes).
+// What one paid student is worth in one lesson (per_student / package modes).
 export function studentRate(rule, date, settings) {
   if (rule.mode === 'per_student') return rule.rate + (rule.raise ? groupRaise(date, settings) : 0);
-  if (rule.mode === 'monthly') return rule.lessonsInMonth ? rule.rate / rule.lessonsInMonth : 0;
+  if (rule.mode === 'package') return rule.rate / rule.packageLessons;
   return 0;
 }
 
@@ -75,7 +75,7 @@ export function lessonPay(lesson, rule, settings) {
   // What this lesson is worth; only taught/upcoming lessons actually earn it.
   let worth = 0;
   const perStudent = studentRate(rule, lesson.date, settings);
-  if (rule.mode === 'per_student' || rule.mode === 'monthly') worth = perStudent * paid;
+  if (rule.mode === 'per_student' || rule.mode === 'package') worth = perStudent * paid;
   else if (rule.mode === 'per_lesson') worth = paid > 0 || students.length === 0 ? rule.rate : 0;
   else if (rule.mode === 'per_hour') worth = paid > 0 || students.length === 0 ? (rule.rate * (lesson.minutes || 0)) / 60 : 0;
   worth = Math.round(worth * 100) / 100;
