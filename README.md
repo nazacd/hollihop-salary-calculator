@@ -33,9 +33,12 @@ Any group can be overridden with its own type, pay mode and rate:
 
 A custom per-group rate is used as-is, without the seniority raise.
 
-A student counts as **paid** either:
-- *As HolliHop marks it* (default): HolliHop's "payable to teacher" flag on the attendance record, so an absence without a valid reason is paid and an excused one isn't; or
+A student counts as **paid** for a lesson when:
+- *Students charged for the lesson* (default): the student was charged for it, meaning they were present or absent **without** a valid reason. Excused absences (sick, abroad, etc.) aren't charged, so they aren't paid.
+- *HolliHop "payable to teacher" flag*: HolliHop's own teacher flag. Note that it also pays excused absences and demo lessons.
 - *Only students who attended*.
+
+**Demo lessons:** a student's first appearance in a group is a free demo and isn't paid. Admins usually record a demo as absent with a "DEMO" note, so the demo is the last "DEMO"-noted lesson up to the student's first lesson marked present, or that first present lesson if there's no note. Lessons between enrollment and the demo (the student enrolled but hadn't come yet) don't count at all. This can be switched off in Settings.
 
 A group is treated as individual when its learning type or name matches a regex (default `\bIV\b|INDIV`, so `IV OFFLINE` groups are individual).
 
