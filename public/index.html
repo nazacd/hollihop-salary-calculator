@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My Salary</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="favicon.svg" alt="" width="28" height="28">
+      <span>My Salary</span>
+    </div>
+    <div class="month-nav" role="group" aria-label="Month">
+      <button class="icon-btn" id="prevMonth" title="Previous month (←)" aria-label="Previous month">‹</button>
+      <button class="month-label" id="monthLabel" title="Jump to current month"></button>
+      <button class="icon-btn" id="nextMonth" title="Next month (→)" aria-label="Next month">›</button>
+    </div>
+    <div class="topbar-right">
+      <button class="chip" id="teacherBtn" title="Change teacher"></button>
+      <button class="icon-btn" id="refreshBtn" title="Reload from HolliHop" aria-label="Reload">⟳</button>
+    </div>
+  </header>
+
+  <main id="app">
+    <section class="hero" id="hero"></section>
+    <section class="kpis" id="kpis"></section>
+
+    <nav class="tabs" id="tabs" role="tablist">
+      <button data-tab="overview" role="tab">Overview</button>
+      <button data-tab="calendar" role="tab">Calendar</button>
+      <button data-tab="lessons" role="tab">Lessons</button>
+      <button data-tab="students" role="tab">Students</button>
+      <button data-tab="groups" role="tab">Groups &amp; rates</button>
+      <button data-tab="trends" role="tab">Trends</button>
+      <button data-tab="settings" role="tab">Settings</button>
+    </nav>
+
+    <section id="view" class="view"></section>
+  </main>
+
+  <div class="overlay" id="overlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true">
+      <button class="icon-btn modal-close" id="modalClose" aria-label="Close">✕</button>
+      <div id="modalBody"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
