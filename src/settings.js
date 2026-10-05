@@ -14,9 +14,12 @@ export const DEFAULT_SETTINGS = {
   // How many lessons the individual rate pays for (1,250,000 per 12 lessons by default).
   packageLessons: 12,
   // Which student-days earn money:
-  //  'payable'  – whatever HolliHop marks as payable to the teacher (default)
+  //  'charged'  – the student is charged for the lesson: present, or absent without a valid reason (default)
+  //  'payable'  – HolliHop's "payable to teacher" flag (also pays excused absences and demos)
   //  'attended' – only students who actually attended
-  basis: 'payable',
+  basis: 'charged',
+  // A student's first appearance in a group is a free demo; days before it don't count.
+  demoUnpaid: true,
   // Learning types / names matching this regex are treated as individual lessons.
   individualPattern: '\\bIV\\b|INDIV',
   // { [unitId]: { category?: 'group'|'individual', mode?: 'per_student'|'per_lesson'|'per_hour'|'none', rate?: number } }
@@ -84,7 +87,10 @@ function sanitize(s) {
       since: isoDate(s.groupRaise?.since),
     },
     packageLessons: Math.max(0, Math.round(num(s.packageLessons))) || DEFAULT_SETTINGS.packageLessons,
-    basis: s.basis === 'attended' ? 'attended' : 'payable',
+    // Before version 2, 'payable' was the default basis, so move those settings to 'charged'.
+    basis: ['attended', 'payable', 'charged'].includes(s.basis) && !(s.basis === 'payable' && !s.version) ? s.basis : 'charged',
+    demoUnpaid: s.demoUnpaid !== false,
+    version: 2,
     individualPattern: typeof s.individualPattern === 'string' ? s.individualPattern.slice(0, 200) : DEFAULT_SETTINGS.individualPattern,
     unitOverrides: {},
     adjustments: {},

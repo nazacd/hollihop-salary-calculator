@@ -1,4 +1,4 @@
-import { computeMonth, unitRule, categoryOf, groupRaise, studentRate, MODES, DEFAULT_MODES } from './calc.js';
+import { computeMonth, unitRule, categoryOf, groupRaise, studentRate, isPaidStudent, demoUnpaid, MODES, BASES } from './calc.js';
 
 // ---------------------------------------------------------------- helpers
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -354,6 +354,14 @@ function attentionList(c) {
   const items = [];
   const unpaid = c.lessons.filter((l) => l.status === 'taught' && l.pay.absentUnpaid > 0);
   if (unpaid.length) items.push(`<b>${c.totals.absentUnpaid}</b> absences you were <b>not paid</b> for, across ${unpaid.length} lessons.`);
+  if (c.totals.demo) {
+    const names = new Map(raw().students.map((s) => [s.clientId, s.name]));
+    const demos = c.lessons.filter((l) => l.status === 'taught').flatMap((l) => l.students.filter((s) => s.demo).map((s) => names.get(s.clientId)));
+    items.push(`<b>${c.totals.demo}</b> demo lesson${c.totals.demo > 1 ? 's' : ''} (not paid): ${demos.slice(0, 6).map(esc).join(', ')}${demos.length > 6 ? '…' : ''}.`);
+  }
+  const ghosts = c.students.filter((s) => s.attended === 0 && s.absentPaid > 0);
+  if (ghosts.length)
+    items.push(`<b>${ghosts.length}</b> student${ghosts.length > 1 ? 's' : ''} never attended this month but ${ghosts.length > 1 ? 'were' : 'was'} paid for absences: ${ghosts.slice(0, 5).map((s) => esc(s.name)).join(', ')}${ghosts.length > 5 ? '…' : ''}. Check they're still in the group.`);
   const empty = c.lessons.filter((l) => l.status === 'taught' && l.pay.total > 0 && l.pay.paid === 0);
   if (empty.length) items.push(`<b>${empty.length}</b> taught lessons earned nothing (everyone absent / unpaid).`);
   const cancelled = c.lessons.filter((l) => l.status === 'cancelled');
@@ -421,15 +429,22 @@ function openDay(iso) {
     ${ls.map(lessonBlock).join('')}`);
 }
 
+// Attendance + pay badges for one student on one lesson.
+function studentDayBadges(s, lessonStatus) {
+  const rule = demoUnpaid(state.settings);
+  if (rule && s.beforeStart) return '<span class="badge b-neutral" title="Enrolled, but hasn\'t come to the group yet">not started</span>';
+  const att = s.absent ? '<span class="badge b-danger">Absent</span>' : '<span class="badge b-taught">Present</span>';
+  if (rule && s.demo) return `${s.absent ? '' : att} <span class="badge b-covered" title="First appearance in the group — not paid">demo</span>`;
+  if (lessonStatus === 'cancelled') return att;
+  return `${att} ${isPaidStudent(s, state.settings) ? '<span class="badge b-accent">paid</span>' : '<span class="badge b-neutral">not paid</span>'}`;
+}
+
 function lessonBlock(l) {
   const studentsById = new Map(raw().students.map((s) => [s.clientId, s]));
   const rows = l.students
     .map((s) => {
       const st = studentsById.get(s.clientId);
-      const paid = state.settings.basis === 'attended' ? !s.absent : s.teacherPayable;
-      const att = s.absent ? '<span class="badge b-danger">Absent</span>' : '<span class="badge b-taught">Present</span>';
-      const pay = l.status === 'cancelled' ? '' : paid ? '<span class="badge b-accent">paid</span>' : '<span class="badge b-neutral">not paid</span>';
-      return `<div class="student-row"><span>${esc(st?.name ?? s.clientId)}${s.description ? ` <span class="small muted">— ${esc(s.description)}</span>` : ''}</span><span>${att} ${pay}</span></div>`;
+      return `<div class="student-row"${demoUnpaid(state.settings) && s.beforeStart ? ' style="opacity:.55"' : ''}><span>${esc(st?.name ?? s.clientId)}${s.description ? ` <span class="small muted">— ${esc(s.description)}</span>` : ''}</span><span>${studentDayBadges(s, l.status)}</span></div>`;
     })
     .join('');
   return `<div class="lesson-block">
@@ -438,7 +453,7 @@ function lessonBlock(l) {
     ${l.coveredBy ? `<p class="small" style="margin:8px 0 0">Taught by <b>${esc(l.coveredBy)}</b></p>` : ''}
     ${l.description ? `<p class="small" style="margin:8px 0 0">📝 ${esc(l.description)}</p>` : ''}
     ${l.status !== 'covered' && l.students.length ? `<div style="margin-top:10px">${rows}</div>
-      <p class="small muted" style="margin:8px 0 0">${l.pay.present}/${l.pay.total} present · ${l.pay.paid} paid · ${ruleText(l.rule, l.date)}</p>` : ''}
+      <p class="small muted" style="margin:8px 0 0">${l.pay.present}/${l.pay.total} present · ${l.pay.paid} paid${l.pay.demo ? ` · ${l.pay.demo} demo` : ''} · ${ruleText(l.rule, l.date)}</p>` : ''}
   </div>`;
 }
 
@@ -514,7 +529,7 @@ function renderStudents(el) {
   const q = state.studentQ.trim().toLowerCase();
   const { key, dir } = state.studentSort;
   const list = c.students
-    .filter((s) => s.attended + s.absentPaid + s.absentUnpaid + s.upcoming > 0)
+    .filter((s) => s.attended + s.absentPaid + s.absentUnpaid + s.demo + s.upcoming > 0)
     .filter((s) => !q || s.name.toLowerCase().includes(q) || s.enrollments.some((e) => unitsById.get(e.unitId)?.name.toLowerCase().includes(q)))
     .map((s) => ({ ...s, rate: s.attended + s.absentPaid + s.absentUnpaid ? s.attended / (s.attended + s.absentPaid + s.absentUnpaid) : null }))
     .sort((a, b) => {
@@ -525,7 +540,7 @@ function renderStudents(el) {
   el.innerHTML = `<div class="card">
     <div class="card-head"><h2>${list.length} students</h2><input class="input" id="studentQ" placeholder="Search student or group…" value="${esc(state.studentQ)}"></div>
     <div class="table-wrap"><table>
-      <thead><tr>${th('name', 'Student')}<th>Group</th>${th('attended', 'Attended', 'num')}${th('absentPaid', 'Absent · paid', 'num')}${th('absentUnpaid', 'Absent · unpaid', 'num')}${th('rate', 'Attendance', 'num')}${th('earned', 'You earned', 'num')}<th>Phone</th></tr></thead>
+      <thead><tr>${th('name', 'Student')}<th>Group</th>${th('attended', 'Attended', 'num')}${th('absentPaid', 'Absent · paid', 'num')}${th('absentUnpaid', 'Absent · unpaid', 'num')}${th('demo', 'Demo', 'num')}${th('rate', 'Attendance', 'num')}${th('earned', 'You earned', 'num')}<th>Phone</th></tr></thead>
       <tbody>${list
         .map(
           (s) => `<tr class="clickable" data-student="${s.clientId}">
@@ -534,6 +549,7 @@ function renderStudents(el) {
           <td class="num">${s.attended}</td>
           <td class="num">${s.absentPaid || '—'}</td>
           <td class="num" ${s.absentUnpaid ? 'style="color:var(--danger)"' : ''}>${s.absentUnpaid || '—'}</td>
+          <td class="num">${s.demo || '—'}</td>
           <td class="num">${pct(s.rate)}</td>
           <td class="num"><b>${money(s.earned)}</b>${s.upcoming ? `<div class="small muted">+${money(s.upcoming)}</div>` : ''}</td>
           <td class="small">${s.mobile ? `<a href="tel:${esc(s.mobile.replace(/\s/g, ''))}" onclick="event.stopPropagation()">${esc(s.mobile)}</a>` : '—'}</td></tr>`,
@@ -549,14 +565,13 @@ function openStudent(id) {
   const rows = ls
     .map((l) => {
       const d = l.students.find((x) => x.clientId === id);
-      const paid = state.settings.basis === 'attended' ? !d.absent : d.teacherPayable;
-      const share = l.pay.paid && paid ? l.pay.amount / l.pay.paid : 0;
-      return `<tr><td>${fmtDate(l.date)}</td><td class="small">${esc(shortName(l.unit))}</td><td>${l.status === 'taught' ? (d.absent ? '<span class="badge b-danger">Absent</span>' : '<span class="badge b-taught">Present</span>') : statusBadge(l.status)}</td>
+      const share = l.pay.paid && isPaidStudent(d, state.settings) ? l.pay.amount / l.pay.paid : 0;
+      return `<tr><td>${fmtDate(l.date)}</td><td class="small">${esc(shortName(l.unit))}</td><td>${l.status === 'taught' ? studentDayBadges(d, l.status) : statusBadge(l.status)}</td>
         <td class="num">${share ? money(share) : '—'}</td><td class="small muted">${esc(d.description ?? '')}</td></tr>`;
     })
     .join('');
   openModal(`<h2>${esc(s.name)}</h2>
-    <p class="muted" style="margin:0 0 4px">${s.mobile ? `📞 <a href="tel:${esc(s.mobile.replace(/\s/g, ''))}">${esc(s.mobile)}</a> · ` : ''}${s.attended} attended · ${s.absentPaid + s.absentUnpaid} absent · earned ${money(s.earned)}</p>
+    <p class="muted" style="margin:0 0 4px">${s.mobile ? `📞 <a href="tel:${esc(s.mobile.replace(/\s/g, ''))}">${esc(s.mobile)}</a> · ` : ''}${s.attended} attended · ${s.absentPaid + s.absentUnpaid} absent${s.demo ? ' · demo lesson' : ''} · earned ${money(s.earned)}</p>
     ${s.enrollments.map((e) => `<div class="small muted">${esc(unitsById.get(e.unitId)?.name ?? '')}: since ${esc(e.beginDate ?? '?')}${e.endDate ? ` until ${esc(e.endDate)}` : ''}${e.leaveReason ? ` — ${esc(e.leaveReason)}` : ''}</div>`).join('')}
     <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>Date</th><th>Group</th><th>Status</th><th class="num">Earned</th><th>Note</th></tr></thead><tbody>${rows}</tbody></table></div>`);
 }
@@ -790,11 +805,13 @@ function renderSettings(el) {
     </div>
     <div class="card">
       <h2>Which students earn money?</h2>
-      <div class="seg" style="margin-bottom:8px">
-        <button data-basis="payable" class="${s.basis === 'payable' ? 'on' : ''}">As HolliHop marks it</button>
-        <button data-basis="attended" class="${s.basis === 'attended' ? 'on' : ''}">Only students who attended</button>
-      </div>
-      <p class="muted small" style="margin:0">“As HolliHop marks it” uses the <i>payable to teacher</i> flag of each attendance record — e.g. an unexcused absence can still be paid while an excused one is not.</p>
+      <div class="seg" style="margin-bottom:8px">${Object.entries(BASES)
+        .map(([k, v]) => `<button data-basis="${k}" class="${s.basis === k ? 'on' : ''}">${v}</button>`)
+        .join('')}</div>
+      <p class="muted small" style="margin:0 0 12px">“Students charged” pays for students who were present or absent <b>without</b> a valid reason — the ones the student pays for.
+        HolliHop's own “payable to teacher” flag also pays excused absences (sick, abroad…) and demo lessons.</p>
+      <label class="toolbar small"><input type="checkbox" id="demoUnpaid" ${s.demoUnpaid ? 'checked' : ''}>
+        A student's first appearance in a group is a free <b>demo</b> (not paid); lessons before it don't count.</label>
     </div>
     <div class="card">
       <h2>Individual lesson detection</h2>
@@ -1010,6 +1027,10 @@ function bindEvents() {
     if (t.id === 'lessonUnit') {
       state.lessonFilter.unit = t.value;
       return renderView();
+    }
+    if (t.id === 'demoUnpaid') {
+      updateSettings((s) => (s.demoUnpaid = t.checked));
+      return toast('Saved');
     }
     if (t.dataset.setting) {
       const path = t.dataset.setting;

@@ -21,6 +21,51 @@ function teacherNamesOf(item) {
   return item.Teacher ? [item.Teacher] : [];
 }
 
+const LOOKAHEAD_DAYS = 31;
+const LOOKBACK_DAYS = 365;
+
+function addDays(iso, n) {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+const isDemoNote = (d) => /demo/i.test(d.Description || '');
+
+// Finds the demo lesson (the student's first appearance in the group) from their days.
+// Admins usually mark the demo as absent with a "DEMO" note so the student isn't charged; a student
+// can also have a planned "DEMO" they skipped and a later one they came to. So the demo is the last
+// "DEMO"-noted day up to the first day marked present, or that first present day if there's no note.
+// Returns the date, or null if the student hasn't appeared at all yet.
+export function findDemo(days) {
+  const sorted = [...days].sort((a, b) => a.Date.localeCompare(b.Date));
+  const firstPresent = sorted.find((d) => !d.Pass)?.Date;
+  const notes = sorted.filter((d) => isDemoNote(d) && (!firstPresent || d.Date <= firstPresent));
+  return notes.at(-1)?.Date ?? firstPresent ?? null;
+}
+
+// clientId -> { demo } for students whose first appearance may affect this month. Students who
+// joined before the lookback window are long past their demo and get no entry.
+function studentStarts(students, history, lookbackFrom) {
+  const days = new Map();
+  const joined = new Map();
+  for (const st of [...history, ...students]) {
+    const id = st.StudentClientId;
+    if (!st.BeginDate || st.BeginDate < lookbackFrom) {
+      joined.set(id, 'long-ago');
+      continue;
+    }
+    if (joined.get(id) !== 'long-ago') joined.set(id, 'recent');
+    if (!days.has(id)) days.set(id, new Map());
+    for (const d of st.Days ?? []) days.get(id).set(d.Date, d);
+  }
+  const out = new Map();
+  for (const [id, state] of joined) {
+    if (state === 'recent') out.set(id, { demo: findDemo([...days.get(id).values()]) });
+  }
+  return out;
+}
+
 function daysBetween(a, b) {
   return Math.round((Date.parse(b) - Date.parse(a)) / 86_400_000);
 }
@@ -47,11 +92,19 @@ export async function buildMonth(api, { teacherId, year, month, fresh = false })
   const { units: myUnits, now } = await api.edUnits({ teacherId: tid, dateFrom: from, dateTo: to }, opts);
 
   const perUnit = await mapLimit(myUnits, 4, async (u) => {
-    const [full, students] = await Promise.all([
+    const [full, allStudents] = await Promise.all([
       api.edUnits({ id: u.Id, dateFrom: from, dateTo: to }, opts).then((r) => r.units[0]),
-      api.edUnitStudents({ edUnitId: u.Id, dateFrom: from, dateTo: to }, opts),
+      // Look a month ahead so a demo that is only confirmed by a later first visit is detected.
+      api.edUnitStudents({ edUnitId: u.Id, dateFrom: from, dateTo: addDays(to, LOOKAHEAD_DAYS) }, opts),
     ]);
-    return { mine: u, full: full ?? u, students };
+    const students = allStudents.filter((st) => !st.BeginDate || st.BeginDate <= to);
+    // Students who joined recently, before this month: fetch their earlier days to find their demo.
+    const lookbackFrom = addDays(from, -LOOKBACK_DAYS);
+    const recentBegins = students.map((st) => st.BeginDate).filter((b) => b && b < from && b >= lookbackFrom).sort();
+    const history = recentBegins.length
+      ? await api.edUnitStudents({ edUnitId: u.Id, dateFrom: recentBegins[0], dateTo: addDays(from, -1) }, opts)
+      : [];
+    return { mine: u, full: full ?? u, students, starts: studentStarts(students, history, lookbackFrom) };
   });
 
   const nowStr = (now || new Date().toISOString()).slice(0, 16); // YYYY-MM-DDTHH:MM
@@ -59,7 +112,7 @@ export async function buildMonth(api, { teacherId, year, month, fresh = false })
   const lessons = [];
   const studentMap = new Map();
 
-  for (const { mine, full, students } of perUnit) {
+  for (const { mine, full, students, starts } of perUnit) {
     const scheduleById = new Map();
     for (const s of full.ScheduleItems ?? []) scheduleById.set(s.Id, s);
     for (const s of mine.ScheduleItems ?? []) if (!scheduleById.has(s.Id)) scheduleById.set(s.Id, s);
@@ -109,15 +162,22 @@ export async function buildMonth(api, { teacherId, year, month, fresh = false })
         status: st.Status,
         leaveReason: st.StudentExtraFields?.find((f) => /SABAB|REASON/i.test(f.Name))?.Value,
       });
+      const start = starts.get(id);
       for (const d of st.Days ?? []) {
+        if (d.Date > to) continue;
         if (!studentDays.has(d.Date)) studentDays.set(d.Date, []);
-        studentDays.get(d.Date).push({
+        if (studentDays.get(d.Date).some((x) => x.clientId === id)) continue; // duplicate enrollment row
+        const day = {
           clientId: id,
           absent: !!d.Pass,
           teacherPayable: (d.TeacherPayableMinutes ?? 0) > 0,
           studentPayable: (d.StudentPayableMinutes ?? 0) > 0,
           description: d.Description || undefined,
-        });
+        };
+        // demo: the student's first appearance in this group; beforeStart: enrolled but not come yet.
+        if (start?.demo === d.Date) day.demo = true;
+        else if (start && (start.demo === null || d.Date < start.demo)) day.beforeStart = true;
+        studentDays.get(d.Date).push(day);
       }
     }
 

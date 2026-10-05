@@ -61,12 +61,29 @@ export function studentRate(rule, date, settings) {
   return 0;
 }
 
+export const BASES = {
+  charged: 'Students charged for the lesson',
+  payable: 'HolliHop "payable to teacher" flag',
+  attended: 'Only students who attended',
+};
+
+// Demo lessons (a student's first appearance in a group) and the days before it are unpaid.
+export const demoUnpaid = (settings) => settings.demoUnpaid !== false;
+
 export function isPaidStudent(s, settings) {
-  return settings.basis === 'attended' ? !s.absent : s.teacherPayable;
+  if (demoUnpaid(settings) && (s.demo || s.beforeStart)) return false;
+  if (settings.basis === 'attended') return !s.absent;
+  if (settings.basis === 'payable') return s.teacherPayable;
+  // 'charged': present, or absent without a valid reason (the student still pays for the lesson).
+  return s.studentPayable;
 }
 
 export function lessonPay(lesson, rule, settings) {
-  const students = lesson.students ?? [];
+  const demoRule = demoUnpaid(settings);
+  // Students who haven't come to the group yet aren't part of the lesson at all.
+  const all = (lesson.students ?? []).filter((s) => !(demoRule && s.beforeStart));
+  const demo = demoRule ? all.filter((s) => s.demo).length : 0;
+  const students = demoRule ? all.filter((s) => !s.demo) : all;
   const present = students.filter((s) => !s.absent).length;
   const paid = students.filter((s) => isPaidStudent(s, settings)).length;
   const absentPaid = students.filter((s) => s.absent && isPaidStudent(s, settings)).length;
@@ -76,11 +93,11 @@ export function lessonPay(lesson, rule, settings) {
   let worth = 0;
   const perStudent = studentRate(rule, lesson.date, settings);
   if (rule.mode === 'per_student' || rule.mode === 'package') worth = perStudent * paid;
-  else if (rule.mode === 'per_lesson') worth = paid > 0 || students.length === 0 ? rule.rate : 0;
-  else if (rule.mode === 'per_hour') worth = paid > 0 || students.length === 0 ? (rule.rate * (lesson.minutes || 0)) / 60 : 0;
+  else if (rule.mode === 'per_lesson') worth = paid > 0 || all.length === 0 ? rule.rate : 0;
+  else if (rule.mode === 'per_hour') worth = paid > 0 || all.length === 0 ? (rule.rate * (lesson.minutes || 0)) / 60 : 0;
   worth = Math.round(worth * 100) / 100;
   const earning = lesson.status === 'taught' || lesson.status === 'upcoming';
-  return { present, paid, absentPaid, absentUnpaid, total: students.length, perStudent, amount: earning ? worth : 0, worth };
+  return { present, paid, absentPaid, absentUnpaid, demo, total: students.length, perStudent, amount: earning ? worth : 0, worth };
 }
 
 const ymOf = (m) => `${m.year}-${String(m.month).padStart(2, '0')}`;
@@ -96,7 +113,7 @@ export function computeMonth(month, settings) {
     ]),
   );
   const studentStats = new Map(
-    month.students.map((s) => [s.clientId, { ...s, attended: 0, absentPaid: 0, absentUnpaid: 0, earned: 0, upcoming: 0 }]),
+    month.students.map((s) => [s.clientId, { ...s, attended: 0, absentPaid: 0, absentUnpaid: 0, demo: 0, earned: 0, upcoming: 0 }]),
   );
 
   const totals = {
@@ -111,6 +128,7 @@ export function computeMonth(month, settings) {
     presentVisits: 0,
     visits: 0,
     absentUnpaid: 0,
+    demo: 0,
     absentPaid: 0,
     missed: 0,
   };
@@ -132,6 +150,7 @@ export function computeMonth(month, settings) {
       totals.visits += pay.total;
       totals.absentPaid += pay.absentPaid;
       totals.absentUnpaid += pay.absentUnpaid;
+      totals.demo += pay.demo;
       u.minutes += l.minutes || 0;
       u.paidVisits += pay.paid;
       u.earned += pay.amount;
@@ -153,6 +172,11 @@ export function computeMonth(month, settings) {
         const st = studentStats.get(s.clientId);
         if (!st) continue;
         const paid = isPaidStudent(s, settings);
+        if (demoUnpaid(settings) && s.beforeStart) continue;
+        if (demoUnpaid(settings) && s.demo) {
+          if (l.status === 'taught') st.demo += 1;
+          continue;
+        }
         if (l.status === 'upcoming') {
           if (paid) st.upcoming += share;
           continue;

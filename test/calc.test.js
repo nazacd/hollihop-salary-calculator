@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeMonth, categoryOf, lessonPay, unitRule, groupRaise, monthsBetween } from '../public/calc.js';
-import { monthRange } from '../src/month.js';
+import { computeMonth, categoryOf, lessonPay, unitRule, groupRaise, monthsBetween, isPaidStudent } from '../public/calc.js';
+import { monthRange, findDemo } from '../src/month.js';
 
 const settings = (over = {}) => ({
   currency: 'UZS',
@@ -154,4 +154,54 @@ test('individual pay: 1,250,000 per student for a package of 12 lessons', () => 
   // Package size is configurable.
   const eight = settings({ ...s, packageLessons: 8 });
   assert.equal(lessonPay(month.lessons[3], unitRule(month.units[1], eight), eight).amount, 156_250);
+});
+
+const hd = (Date, Pass, Description) => ({ Date, Pass, Description });
+
+test('findDemo: the demo is the last DEMO note up to the first visit, else the first visit', () => {
+  // XAYDAROVA IRODA: planned demo on 18 Sep she skipped, real demo on 5 Oct, first marked present 7 Oct
+  const iroda = [hd('2026-09-18', true, 'DEMO'), hd('2026-09-21', true), hd('2026-10-02', true), hd('2026-10-05', true, 'DEMO'), hd('2026-10-07', false)];
+  assert.equal(findDemo(iroda), '2026-10-05');
+  // JURAYEVA SHAHLO: "DEMO KELDILAR" marked absent, then present the next lesson
+  assert.equal(findDemo([hd('2026-08-13', false), hd('2026-08-12', true, 'DEMO KELDILAR')]), '2026-08-12');
+  // No note: the first visit is the demo
+  assert.equal(findDemo([hd('2026-09-21', false), hd('2026-09-23', false)]), '2026-09-21');
+  // Later DEMO-like notes after the first visit don't matter
+  assert.equal(findDemo([hd('2026-09-21', false), hd('2026-09-23', true, 'demo')]), '2026-09-21');
+  // Never came
+  assert.equal(findDemo([hd('2026-09-21', true), hd('2026-09-23', true)]), null);
+});
+
+test('demo and not-started days are unpaid; "charged" basis skips excused absences', () => {
+  const s = settings({ basis: 'charged' });
+  const present = { absent: false, studentPayable: true, teacherPayable: true };
+  const unexcused = { absent: true, studentPayable: true, teacherPayable: true };
+  const excused = { absent: true, studentPayable: false, teacherPayable: true }; // e.g. "KASAL BOGAN"
+  assert.equal(isPaidStudent(present, s), true);
+  assert.equal(isPaidStudent(unexcused, s), true);
+  assert.equal(isPaidStudent(excused, s), false);
+  assert.equal(isPaidStudent(excused, settings({ basis: 'payable' })), true);
+  assert.equal(isPaidStudent({ ...present, demo: true }, s), false);
+  assert.equal(isPaidStudent({ ...unexcused, beforeStart: true }, s), false);
+  assert.equal(isPaidStudent({ ...present, demo: true }, settings({ basis: 'charged', demoUnpaid: false })), true);
+
+  const lesson = {
+    unitId: 1,
+    date: '2026-09-21',
+    minutes: 90,
+    status: 'taught',
+    students: [
+      { clientId: 10, ...present },
+      { clientId: 11, ...present, demo: true },
+      { clientId: 12, ...unexcused, beforeStart: true },
+    ],
+  };
+  const pay = lessonPay(lesson, unitRule(month.units[0], s), s);
+  assert.deepEqual({ paid: pay.paid, demo: pay.demo, total: pay.total, absentPaid: pay.absentPaid }, { paid: 1, demo: 1, total: 1, absentPaid: 0 });
+  assert.equal(pay.amount, 10_000);
+
+  const r = computeMonth({ ...month, lessons: [lesson] }, s);
+  assert.equal(r.totals.demo, 1);
+  assert.equal(r.students.find((x) => x.clientId === 11).demo, 1);
+  assert.equal(r.students.find((x) => x.clientId === 12).absentPaid, 0);
 });
