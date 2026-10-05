@@ -1,4 +1,4 @@
-import { computeMonth, unitRule, MODES } from './calc.js';
+import { computeMonth, unitRule, categoryOf, groupRaise, studentRate, MODES, DEFAULT_MODES } from './calc.js';
 
 // ---------------------------------------------------------------- helpers
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -58,6 +58,7 @@ const state = {
   studentSort: { key: 'earned', dir: -1 },
   studentQ: '',
   trendCount: 6,
+  history: null, // units the teacher ever taught, for the raise start date
 };
 
 const raw = () => state.months.get(ym(state.year, state.month));
@@ -437,7 +438,7 @@ function lessonBlock(l) {
     ${l.coveredBy ? `<p class="small" style="margin:8px 0 0">Taught by <b>${esc(l.coveredBy)}</b></p>` : ''}
     ${l.description ? `<p class="small" style="margin:8px 0 0">📝 ${esc(l.description)}</p>` : ''}
     ${l.status !== 'covered' && l.students.length ? `<div style="margin-top:10px">${rows}</div>
-      <p class="small muted" style="margin:8px 0 0">${l.pay.present}/${l.pay.total} present · ${l.pay.paid} paid · rule: ${MODES[l.rule.mode]} × ${money(l.rule.rate)}</p>` : ''}
+      <p class="small muted" style="margin:8px 0 0">${l.pay.present}/${l.pay.total} present · ${l.pay.paid} paid · ${ruleText(l.rule, l.date)}</p>` : ''}
   </div>`;
 }
 
@@ -566,7 +567,7 @@ function renderGroups(el) {
   const s = state.settings;
   el.innerHTML = `
     <div class="banner" style="background:var(--accent-soft);border-color:transparent">
-      <span>Default rates: <b>${money(s.rates.group)}</b> per paid student in a group lesson, <b>${money(s.rates.individual)}</b> per paid student in an individual lesson. Override per group below.</span>
+      <span>Group lessons: <b>${ruleText(defaultRule('group'), raw().to)}</b>. Individual: <b>${money(s.rates.individual)}</b> per student per month, split across the month's lessons. You can override any group below.</span>
       <button class="btn sm" data-goto="settings">Change defaults</button>
     </div>
     ${c.units.length ? '' : '<div class="card empty-state">No groups this month.</div>'}
@@ -588,9 +589,10 @@ function renderGroups(el) {
             <select class="input" data-ov="category"><option value="">Auto (${categoryOfAuto(u)})</option><option value="group" ${o.category === 'group' ? 'selected' : ''}>Group</option><option value="individual" ${o.category === 'individual' ? 'selected' : ''}>Individual</option></select></div>
           <div class="field"><label>Pay mode</label>
             <select class="input" data-ov="mode">${Object.entries(MODES).map(([k, v]) => `<option value="${k}" ${u.rule.mode === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
-          <div class="field" style="grid-column:span 2"><label>Rate ${o.rate === undefined ? '<span class="muted">(default)</span>' : ''}</label>
+          <div class="field" style="grid-column:span 2"><label>${RATE_LABEL[u.rule.mode] ?? 'Rate'} ${o.rate === undefined ? '<span class="muted">(default)</span>' : ''}</label>
             <div class="toolbar"><input class="input rate" style="flex:1" data-ov="rate" type="number" min="0" step="any" placeholder="${def}" value="${o.rate ?? ''}">
-            ${o.rate !== undefined || o.mode || o.category ? '<button class="btn sm" data-action="reset-unit">Reset</button>' : ''}</div></div>
+            ${o.rate !== undefined || o.mode || o.category ? '<button class="btn sm" data-action="reset-unit">Reset</button>' : ''}</div>
+            <span class="hint">${ruleText(u.rule, raw().to)}</span></div>
         </div>
         <div class="stats">
           <div><b>${u.taught}</b><span>taught</span></div>
@@ -613,6 +615,80 @@ function weekdaysText(mask) {
   // HolliHop weekday bitmask: Mon=1, Tue=2, Wed=4 … Sun=64
   const out = DOW.filter((_, i) => mask & (1 << i));
   return out.length ? out.join('/') : '';
+}
+
+const RATE_LABEL = {
+  per_student: 'Per paid student, per lesson',
+  monthly: 'Per student, per month',
+  per_lesson: 'Per lesson',
+  per_hour: 'Per hour',
+};
+
+const unitOf = (id) => state.calc?.units.find((u) => String(u.id) === String(id)) ?? { id };
+
+function defaultRule(category) {
+  return unitRule({ id: '__default__', type: category === 'individual' ? 'Individual' : 'Group', lessonsInMonth: 0 }, {
+    ...state.settings,
+    individualPattern: '',
+  });
+}
+
+// Human-readable description of how a rule pays on a given date.
+function ruleText(rule, date) {
+  switch (rule.mode) {
+    case 'per_student': {
+      const raise = rule.raise ? groupRaise(date, state.settings) : 0;
+      return `${money(rule.rate + raise)} per paid student / lesson${raise ? ` (${money(rule.rate)} + ${money(raise)} raise)` : ''}`;
+    }
+    case 'monthly':
+      return rule.lessonsInMonth
+        ? `${money(rule.rate)} / month ÷ ${rule.lessonsInMonth} lessons = ${money(studentRate(rule, date, state.settings))} per paid student / lesson`
+        : `${money(rule.rate)} per student / month`;
+    case 'per_lesson':
+      return `${money(rule.rate)} per lesson`;
+    case 'per_hour':
+      return `${money(rule.rate)} per hour`;
+    default:
+      return 'Not paid';
+  }
+}
+
+function isoToday() {
+  return `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+}
+
+function addDays(iso, n) {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+// The next date the group raise goes up, or null.
+function nextRaiseDate() {
+  const r = state.settings.groupRaise;
+  if (!r?.since || !r.amount) return null;
+  const start = isoToday() < r.since ? r.since : isoToday();
+  const now = groupRaise(start, state.settings);
+  for (let i = 1; i <= 31 * (r.everyMonths + 1); i++) {
+    const d = addDays(start, i);
+    if (groupRaise(d, state.settings) > now) return d;
+  }
+  return null;
+}
+
+// Suggest the "group teacher since" date: first lesson in a group that became your own.
+function suggestedRaiseStart() {
+  const own = (state.history ?? []).filter((u) => u.regularSince && categoryOf({ ...u, id: `h${u.id}` }, state.settings) === 'group');
+  return own[0] ? { ...own[0], firstDate: own[0].regularSince } : null;
+}
+
+async function loadHistory() {
+  if (state.history || !state.settings.teacherId) return;
+  try {
+    state.history = await api(`/api/history?teacherId=${state.settings.teacherId}`);
+  } catch {
+    state.history = [];
+  }
 }
 
 // ---------------------------------------------------------------- trends
@@ -681,14 +757,34 @@ function renderSettings(el) {
   const s = state.settings;
   el.innerHTML = `<div class="stack">
     <div class="card">
-      <h2>Rates</h2>
+      <h2>Group lessons</h2>
       <div class="form-grid">
-        <div class="field"><label for="rateGroup">Group lesson — per paid student</label>
-          <input class="input" id="rateGroup" data-setting="rates.group" type="number" min="0" step="any" value="${s.rates.group}">
-          <span class="hint">Paid for every student counted as paid in a group lesson.</span></div>
-        <div class="field"><label for="rateInd">Individual lesson — per paid student</label>
+        <div class="field"><label for="rateGroup">Starting rate, per paid student per lesson</label>
+          <input class="input" id="rateGroup" data-setting="rates.group" type="number" min="0" step="any" value="${s.rates.group}"></div>
+        <div class="field"><label for="raiseAmount">Raise</label>
+          <div class="toolbar"><span>+</span><input class="input rate" id="raiseAmount" data-setting="groupRaise.amount" type="number" min="0" step="any" value="${s.groupRaise.amount}">
+          <span>every</span><input class="input" style="width:70px" id="raiseEvery" data-setting="groupRaise.everyMonths" type="number" min="1" step="1" value="${s.groupRaise.everyMonths}"><span>months</span></div></div>
+        <div class="field"><label for="raiseSince">Group teacher since</label>
+          <input class="input" id="raiseSince" data-setting="groupRaise.since" type="date" value="${esc(s.groupRaise.since)}">
+          ${raiseSuggestionHtml()}</div>
+      </div>
+      <p class="small" style="margin:14px 0 0">${raiseSummaryHtml()}</p>
+    </div>
+    <div class="card">
+      <h2>Individual lessons</h2>
+      <div class="form-grid">
+        <div class="field"><label for="rateInd">Monthly pay per student</label>
           <input class="input" id="rateInd" data-setting="rates.individual" type="number" min="0" step="any" value="${s.rates.individual}">
-          <span class="hint">Used for groups detected as individual (pairs count each student).</span></div>
+          <span class="hint">Split evenly across the month's lessons. Pairs pay this for each student.</span></div>
+        <div class="field"><label for="divisor">Lessons per month to divide by</label>
+          <input class="input" id="divisor" data-setting="monthlyDivisor" type="number" min="0" step="1" placeholder="Auto" value="${s.monthlyDivisor || ''}">
+          <span class="hint">Leave empty to use the lessons each group's weekly schedule gives that month (e.g. Tue/Thu/Sat in September = 13), or the actual lessons if there were more.</span></div>
+      </div>
+      ${individualExampleHtml()}
+    </div>
+    <div class="card">
+      <h2>General</h2>
+      <div class="form-grid">
         <div class="field"><label for="currency">Currency</label>
           <input class="input" id="currency" data-setting="currency" value="${esc(s.currency)}"></div>
         <div class="field"><label for="goal">Monthly goal (optional)</label>
@@ -724,6 +820,32 @@ function renderSettings(el) {
       </div>
     </div>
   </div>`;
+}
+
+function raiseSuggestionHtml() {
+  const sug = suggestedRaiseStart();
+  if (!state.history) return '<span class="hint">Looking up your groups in HolliHop…</span>';
+  if (!sug) return '<span class="hint">Couldn\'t find your first group in HolliHop. Set the date manually.</span>';
+  const same = sug.firstDate === state.settings.groupRaise.since;
+  return `<span class="hint">HolliHop: your first regular group <b>${esc(sug.name)}</b> started on <b>${esc(sug.firstDate)}</b>.
+    ${same ? '✓' : `<button class="btn sm" data-action="use-raise-start" data-date="${esc(sug.firstDate)}">Use this date</button>`}</span>`;
+}
+
+function raiseSummaryHtml() {
+  const s = state.settings;
+  if (!s.groupRaise.since) return '<span style="color:var(--danger)">Set the “group teacher since” date to apply the raise.</span>';
+  const now = s.rates.group + groupRaise(isoToday(), s);
+  const next = nextRaiseDate();
+  return `Your group rate today: <b>${money(now)}</b> per paid student / lesson.${
+    next ? ` Next raise on <b>${fmtDate(next, { day: 'numeric', month: 'long', year: 'numeric' })}</b> → ${money(s.rates.group + groupRaise(next, s))}.` : ''
+  }`;
+}
+
+function individualExampleHtml() {
+  const units = (state.calc?.units ?? []).filter((u) => u.rule.mode === 'monthly' && u.rule.lessonsInMonth);
+  if (!units.length) return '';
+  return `<div class="small muted" style="margin-top:14px">In ${MONTHS[state.month - 1]}:
+    <ul style="margin:4px 0 0;padding-left:18px">${units.map((u) => `<li>${esc(shortName(u))}: ${ruleText(u.rule, raw().to)}</li>`).join('')}</ul></div>`;
 }
 
 // ---------------------------------------------------------------- modal & teacher picker
@@ -821,8 +943,13 @@ function bindEvents() {
       if (id !== state.settings.teacherId) {
         state.months.clear();
         state.calc = null;
-        updateSettings((s) => (s.teacherId = id), { immediate: true });
+        state.history = null;
+        updateSettings((s) => {
+          s.teacherId = id;
+          s.groupRaise.since = '';
+        }, { immediate: true });
         load();
+        initHistory();
       }
       return;
     }
@@ -913,7 +1040,7 @@ function bindEvents() {
         const field = t.dataset.ov;
         if (t.value === '') delete o[field];
         else o[field] = field === 'rate' ? Number(t.value) : t.value;
-        if (field === 'mode' && t.value === 'per_student') delete o.mode;
+        if (field === 'mode' && t.value === (s.modes?.[categoryOf({ ...unitOf(id) }, s)] ?? 'per_student')) delete o.mode;
         s.unitOverrides[id] = o;
       });
       return toast('Saved');
@@ -959,6 +1086,9 @@ function handleAction(action, t) {
   switch (action) {
     case 'reload':
       return load({ fresh: true });
+    case 'use-raise-start':
+      updateSettings((s) => (s.groupRaise.since = t.closest('[data-action]').dataset.date));
+      return toast('Saved');
     case 'pick-teacher':
       return openTeacherPicker();
     case 'csv':
@@ -992,6 +1122,16 @@ function handleAction(action, t) {
 }
 
 // ---------------------------------------------------------------- boot
+// Loads the teacher's group history; fills in the raise start date the first time.
+async function initHistory() {
+  await loadHistory();
+  const sug = suggestedRaiseStart();
+  if (sug && !state.settings.groupRaise.since) {
+    updateSettings((s) => (s.groupRaise.since = sug.firstDate), { immediate: true });
+    toast(`Group raise counted from ${sug.firstDate}, your first group in HolliHop. You can change it in Settings.`, 6000);
+  } else renderAll();
+}
+
 async function boot() {
   readHash();
   bindEvents();
@@ -1002,6 +1142,7 @@ async function boot() {
     return;
   }
   writeHash();
+  initHistory();
   api('/api/teachers')
     .then((t) => {
       state.teachers = t;

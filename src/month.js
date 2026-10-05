@@ -21,6 +21,34 @@ function teacherNamesOf(item) {
   return item.Teacher ? [item.Teacher] : [];
 }
 
+// How many lessons the unit's main weekly schedule gives in [from, to]. The main schedule is the
+// item covering most of the month, so a group that starts or ends mid-month still uses its full
+// weekly pattern (and one-off substitution entries are ignored).
+export function scheduledLessonsInMonth(items, from, to) {
+  let main = null;
+  let best = 0;
+  for (const it of items) {
+    const start = it.BeginDate > from ? it.BeginDate : from;
+    const end = it.EndDate && it.EndDate < to ? it.EndDate : to;
+    const overlap = start <= end ? daysBetween(start, end) + 1 : 0;
+    if (overlap > 0 && overlap >= best) {
+      best = overlap;
+      main = it;
+    }
+  }
+  if (!main?.Weekdays) return 0;
+  let count = 0;
+  for (let d = new Date(`${from}T00:00:00Z`); d.toISOString().slice(0, 10) <= to; d.setUTCDate(d.getUTCDate() + 1)) {
+    // HolliHop weekday mask: Mon=1, Tue=2 … Sun=64
+    if (main.Weekdays & (1 << ((d.getUTCDay() + 6) % 7))) count++;
+  }
+  return count;
+}
+
+function daysBetween(a, b) {
+  return Math.round((Date.parse(b) - Date.parse(a)) / 86_400_000);
+}
+
 async function mapLimit(items, limit, fn) {
   const results = new Array(items.length);
   let next = 0;
@@ -76,6 +104,12 @@ export async function buildMonth(api, { teacherId, year, month, fresh = false })
       studentsCount: mine.StudentsCount,
       assignee: mine.Assignee?.FullName,
       isCover,
+      // Lessons per month used to split monthly pay: what the regular weekly schedule gives this
+      // month, or the actual (non-cancelled) lessons if there were more.
+      lessonsInMonth: Math.max(
+        scheduledLessonsInMonth(full.ScheduleItems ?? [], from, to),
+        (full.Days ?? []).filter((d) => !d.Pass).length,
+      ),
       schedule: (mine.ScheduleItems ?? []).map((s) => ({
         beginDate: s.BeginDate,
         endDate: s.EndDate,
@@ -156,4 +190,29 @@ export async function buildMonth(api, { teacherId, year, month, fresh = false })
   const studentsOut = [...studentMap.values()].sort((a, b) => a.name.localeCompare(b.name));
 
   return { teacherId: tid, year, month, from, to, now: nowStr, units, lessons, students: studentsOut };
+}
+
+// Every unit the teacher ever had a schedule in, with the first date they taught it.
+// Used to suggest when the teacher started leading their own groups.
+export async function teacherHistory(api, { teacherId, fresh = false }) {
+  const tid = Number(teacherId);
+  const today = new Date().toISOString().slice(0, 10);
+  const { units } = await api.edUnits({ teacherId: tid, dateFrom: '2000-01-01', dateTo: today, queryDays: false }, { fresh });
+  return units
+    .map((u) => {
+      const items = [...(u.ScheduleItems ?? [])].sort((a, b) => (a.BeginDate || '').localeCompare(b.BeginDate || ''));
+      const mine = items.filter((s) => teacherIdsOf(s).includes(tid));
+      if (!mine.length) return null;
+      return {
+        id: u.Id,
+        type: u.Type,
+        name: (u.Name || '').replace(/\s+/g, ' ').trim(),
+        learningType: u.LearningType,
+        firstDate: mine[0].BeginDate,
+        // First regular schedule (a week or longer / open-ended) – one-day entries are substitutions.
+        regularSince: mine.find((s) => !s.EndDate || daysBetween(s.BeginDate, s.EndDate) >= 7)?.BeginDate ?? null,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => (a.regularSince ?? a.firstDate).localeCompare(b.regularSince ?? b.firstDate));
 }

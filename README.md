@@ -16,20 +16,28 @@ Switch months with the arrows, or with the ← / → keys.
 
 ## How pay is calculated
 
-For every lesson you taught:
+Defaults (all editable in **Settings**):
 
-| Pay mode | Amount |
+- **Group lessons**: 15,000 UZS per paid student per lesson, plus **500 UZS every 6 months** from the date you became a group teacher. That date is suggested from HolliHop: it's the first regular (not one-day substitution) schedule of yours in a group. The raise is applied per lesson date, so lessons from the raise day onwards use the new rate.
+- **Individual lessons**: 1,250,000 UZS per student per month, split across the month's lessons. In a pair, each student pays this. The default divisor is the number of lessons the group's weekly schedule gives that month (e.g. Tue/Thu/Sat in September 2026 = 13), or the actual number of lessons if there were more. You can set a fixed number instead (e.g. 12). If you teach every lesson and the student is paid for all of them, you get exactly 1,250,000. Lessons a colleague covered, and months where the student joined or left part-way, pay proportionally less.
+
+Any group can be overridden with its own type, pay mode and rate:
+
+| Pay mode | Amount per lesson |
 | --- | --- |
-| Per student (default) | `rate × paid students` |
+| Student × lesson | `rate (+ raise) × paid students` |
+| Monthly / student | `rate ÷ lessons in month × paid students` |
 | Per lesson | `rate` (if at least one student is paid) |
 | Per hour | `rate × lesson minutes / 60` |
 | Not paid | `0` |
 
+A custom per-group rate is used as-is, without the seniority raise.
+
 A student counts as **paid** either:
-- *As HolliHop marks it* (default): HolliHop's "payable to teacher" flag on the attendance record, so an unexcused absence can still pay while an excused one doesn't; or
+- *As HolliHop marks it* (default): HolliHop's "payable to teacher" flag on the attendance record, so an absence without a valid reason is paid and an excused one isn't; or
 - *Only students who attended*.
 
-Default rates are set separately for **group** and **individual** lessons. A group is treated as individual when its learning type or name matches a regex (default `\bIV\b|INDIV`, so `IV OFFLINE` groups are individual). You can override this for any group.
+A group is treated as individual when its learning type or name matches a regex (default `\bIV\b|INDIV`, so `IV OFFLINE` groups are individual).
 
 Only lessons you actually taught count. HolliHop's per-teacher days are used, so lessons a colleague covered for you are excluded (and shown as "missed"). Lessons where you substituted in someone else's group are included.
 

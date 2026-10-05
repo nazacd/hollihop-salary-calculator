@@ -5,8 +5,14 @@ import path from 'node:path';
 export const DEFAULT_SETTINGS = {
   teacherId: null,
   currency: 'UZS',
-  // Default pay per paid student per lesson, by unit category.
-  rates: { group: 0, individual: 0 },
+  // Default pay per category. Group: per paid student per lesson.
+  // Individual: per student per month, split across the month's lessons.
+  rates: { group: 15000, individual: 1250000 },
+  modes: { group: 'per_student', individual: 'monthly' },
+  // Group rate grows by `amount` every `everyMonths` months since `since` (YYYY-MM-DD).
+  groupRaise: { amount: 500, everyMonths: 6, since: '' },
+  // Lessons per month used to split monthly pay; 0 = the group's actual lessons that month.
+  monthlyDivisor: 0,
   // Which student-days earn money:
   //  'payable'  – whatever HolliHop marks as payable to the teacher (default)
   //  'attended' – only students who actually attended
@@ -57,7 +63,9 @@ export class SettingsStore {
 }
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
-const MODES = new Set(['per_student', 'per_lesson', 'per_hour', 'none']);
+const MODES = new Set(['per_student', 'monthly', 'per_lesson', 'per_hour', 'none']);
+const isoDate = (v) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : '');
+const modeOr = (v, d) => (MODES.has(v) ? v : d);
 const CATEGORIES = new Set(['group', 'individual']);
 
 function sanitize(s) {
@@ -65,6 +73,16 @@ function sanitize(s) {
     teacherId: s.teacherId ? num(s.teacherId, null) : null,
     currency: String(s.currency || 'UZS').slice(0, 12),
     rates: { group: num(s.rates?.group), individual: num(s.rates?.individual) },
+    modes: {
+      group: modeOr(s.modes?.group, DEFAULT_SETTINGS.modes.group),
+      individual: modeOr(s.modes?.individual, DEFAULT_SETTINGS.modes.individual),
+    },
+    groupRaise: {
+      amount: num(s.groupRaise?.amount, DEFAULT_SETTINGS.groupRaise.amount),
+      everyMonths: Math.max(1, Math.round(num(s.groupRaise?.everyMonths, DEFAULT_SETTINGS.groupRaise.everyMonths))),
+      since: isoDate(s.groupRaise?.since),
+    },
+    monthlyDivisor: Math.max(0, Math.round(num(s.monthlyDivisor))),
     basis: s.basis === 'attended' ? 'attended' : 'payable',
     individualPattern: typeof s.individualPattern === 'string' ? s.individualPattern.slice(0, 200) : DEFAULT_SETTINGS.individualPattern,
     unitOverrides: {},

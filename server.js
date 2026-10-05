@@ -4,7 +4,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { HolliHop } from './src/hollihop.js';
-import { buildMonth } from './src/month.js';
+import { buildMonth, teacherHistory } from './src/month.js';
 import { SettingsStore } from './src/settings.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -94,6 +94,12 @@ const routes = {
   'GET /api/settings': () => settings.get(),
 
   'PUT /api/settings': async (url, req) => settings.replace(await readJson(req)),
+
+  'GET /api/history': async (url) => {
+    const teacherId = Number(url.searchParams.get('teacherId') || (await settings.get()).teacherId);
+    if (!teacherId) throw Object.assign(new Error('teacherId is not configured'), { status: 400 });
+    return teacherHistory(api, { teacherId, fresh: url.searchParams.has('fresh') });
+  },
 
   'GET /api/month': async (url) => {
     const year = Number(url.searchParams.get('year'));

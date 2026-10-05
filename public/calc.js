@@ -1,19 +1,23 @@
 // Salary calculation. Pure functions, shared by the browser UI and the tests.
 
 export const MODES = {
-  per_student: 'Per student',
+  per_student: 'Student × lesson',
+  monthly: 'Monthly / student',
   per_lesson: 'Per lesson',
   per_hour: 'Per hour',
   none: 'Not paid',
 };
 
+export const DEFAULT_MODES = { group: 'per_student', individual: 'monthly' };
+
 export function categoryOf(unit, settings) {
   const override = settings.unitOverrides?.[unit.id]?.category;
   if (override) return override;
   if (unit.type === 'Individual') return 'individual';
+  if (!settings.individualPattern) return 'group';
   try {
-    const re = new RegExp(settings.individualPattern || '$^', 'i');
-    if (re.test(unit.learningType || '') || re.test(unit.name || '')) return 'individual';
+    const re = new RegExp(settings.individualPattern, 'i');
+    if ((unit.learningType && re.test(unit.learningType)) || (unit.name && re.test(unit.name))) return 'individual';
   } catch {
     // invalid user regex – fall through
   }
@@ -23,12 +27,38 @@ export function categoryOf(unit, settings) {
 export function unitRule(unit, settings) {
   const o = settings.unitOverrides?.[unit.id] ?? {};
   const category = categoryOf(unit, settings);
+  const fixedDivisor = Number(settings.monthlyDivisor) || 0;
   return {
     category,
-    mode: o.mode ?? 'per_student',
+    mode: o.mode ?? settings.modes?.[category] ?? DEFAULT_MODES[category],
     rate: o.rate ?? settings.rates?.[category] ?? 0,
+    // The seniority raise only applies to the default group rate, not to a custom per-group rate.
+    raise: category === 'group' && o.rate === undefined,
+    lessonsInMonth: fixedDivisor || unit.lessonsInMonth || 0,
     custom: o.mode !== undefined || o.rate !== undefined,
   };
+}
+
+// Whole months between two ISO dates (2026-04-22 → 2026-10-21 is 5, → 2026-10-22 is 6).
+export function monthsBetween(fromIso, toIso) {
+  const [y1, m1, d1] = fromIso.split('-').map(Number);
+  const [y2, m2, d2] = toIso.split('-').map(Number);
+  return (y2 - y1) * 12 + (m2 - m1) - (d2 < d1 ? 1 : 0);
+}
+
+// Seniority raise for group lessons on a given date: +amount every N months since the start date.
+export function groupRaise(date, settings) {
+  const r = settings.groupRaise;
+  if (!r?.since || !r.amount || !r.everyMonths || !date) return 0;
+  const months = monthsBetween(r.since, date);
+  return months <= 0 ? 0 : Math.floor(months / r.everyMonths) * r.amount;
+}
+
+// What one paid student is worth in one lesson (per_student / monthly modes).
+export function studentRate(rule, date, settings) {
+  if (rule.mode === 'per_student') return rule.rate + (rule.raise ? groupRaise(date, settings) : 0);
+  if (rule.mode === 'monthly') return rule.lessonsInMonth ? rule.rate / rule.lessonsInMonth : 0;
+  return 0;
 }
 
 export function isPaidStudent(s, settings) {
@@ -44,12 +74,13 @@ export function lessonPay(lesson, rule, settings) {
 
   // What this lesson is worth; only taught/upcoming lessons actually earn it.
   let worth = 0;
-  if (rule.mode === 'per_student') worth = rule.rate * paid;
+  const perStudent = studentRate(rule, lesson.date, settings);
+  if (rule.mode === 'per_student' || rule.mode === 'monthly') worth = perStudent * paid;
   else if (rule.mode === 'per_lesson') worth = paid > 0 || students.length === 0 ? rule.rate : 0;
   else if (rule.mode === 'per_hour') worth = paid > 0 || students.length === 0 ? (rule.rate * (lesson.minutes || 0)) / 60 : 0;
   worth = Math.round(worth * 100) / 100;
   const earning = lesson.status === 'taught' || lesson.status === 'upcoming';
-  return { present, paid, absentPaid, absentUnpaid, total: students.length, amount: earning ? worth : 0, worth };
+  return { present, paid, absentPaid, absentUnpaid, total: students.length, perStudent, amount: earning ? worth : 0, worth };
 }
 
 const ymOf = (m) => `${m.year}-${String(m.month).padStart(2, '0')}`;
