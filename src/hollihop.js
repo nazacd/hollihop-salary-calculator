@@ -28,9 +28,7 @@ export class HolliHop {
 
     qs.set('authkey', this.authKey);
     const promise = (async () => {
-      const res = await fetch(`${this.baseUrl}/${method}?${qs}`, {
-        signal: AbortSignal.timeout(60_000),
-      });
+      const res = await this.fetchWithRetry(`${this.baseUrl}/${method}?${qs}`);
       const text = await res.text();
       if (!res.ok) {
         throw new Error(`HolliHop ${method} failed: HTTP ${res.status} ${text.slice(0, 200)}`);
@@ -44,6 +42,21 @@ export class HolliHop {
     this.cache.set(key, { promise, expires: Date.now() + CACHE_TTL_MS });
     promise.catch(() => this.cache.delete(key));
     return promise;
+  }
+
+  // One retry for transient network failures; persistent ones become a readable error.
+  async fetchWithRetry(url) {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await fetch(url, { signal: AbortSignal.timeout(60_000) });
+      } catch (err) {
+        if (attempt < 2) {
+          await new Promise((r) => setTimeout(r, 1500));
+          continue;
+        }
+        throw networkError(err, new URL(url).host);
+      }
+    }
   }
 
   // Fetches every page of a list endpoint and returns the concatenated array.
@@ -73,4 +86,27 @@ export class HolliHop {
     const { items } = await this.list('GetEdUnitStudents', 'EdUnitStudents', { queryDays: true, ...params }, opts);
     return items;
   }
+}
+
+const NETWORK_HINTS = {
+  EHOSTUNREACH: 'there is no network route to it. Check your internet connection, VPN or firewall',
+  ENETUNREACH: 'there is no network route to it. Check your internet connection, VPN or firewall',
+  ECONNREFUSED: 'the connection was refused. Check BASE_URL in .env',
+  ECONNRESET: 'the connection was reset. Check your internet connection, VPN or firewall',
+  ENOTFOUND: 'the host name could not be resolved. Check BASE_URL in .env and your DNS',
+  EAI_AGAIN: 'DNS lookup failed. Check your internet connection',
+  ETIMEDOUT: 'the connection timed out. Check your internet connection, VPN or firewall',
+  UND_ERR_CONNECT_TIMEOUT: 'the connection timed out. Check your internet connection, VPN or firewall',
+  CERT_HAS_EXPIRED: 'its TLS certificate is invalid',
+};
+
+function networkError(err, host) {
+  if (err.name === 'TimeoutError') {
+    return new Error(`HolliHop (${host}) did not answer within 60 seconds. Try again or check your connection.`);
+  }
+  const cause = err.cause ?? err;
+  const code = cause.code;
+  const where = cause.address ? `${host} (${cause.address})` : host;
+  const hint = NETWORK_HINTS[code] ?? cause.message ?? err.message;
+  return Object.assign(new Error(`Can't reach HolliHop at ${where}: ${hint}.${code ? ` [${code}]` : ''}`), { status: 503, cause: err });
 }

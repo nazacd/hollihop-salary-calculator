@@ -121,7 +121,7 @@ const server = http.createServer(async (req, res) => {
     try {
       send(res, 200, await handler(url, req));
     } catch (err) {
-      console.error(err);
+      console.error(err.status === 503 ? `⚠ ${err.message}` : err);
       send(res, err.status || 502, { error: err.message });
     }
     return;

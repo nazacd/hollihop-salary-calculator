@@ -70,6 +70,16 @@ docker build -t salary .
 docker run -p 3000:3000 --env-file .env -v $(pwd)/data:/app/data salary
 ```
 
+## Troubleshooting
+
+**"Can't reach HolliHop … [EHOSTUNREACH]"** (or `ETIMEDOUT`, `ECONNRESET`) means your computer can't connect to the HolliHop server. It's a network problem, not an app problem. Check it outside the app:
+
+```bash
+curl -sS -o /dev/null -w "%{http_code}\n" "$BASE_URL/GetOffices?authkey=$AUTHKEY"   # 200 = reachable
+```
+
+If that fails too, try another network, or turn a VPN on or off. If HolliHop only opens in your browser through a proxy, start the app with the same proxy: `HTTPS_PROXY=http://host:port NODE_USE_ENV_PROXY=1 npm start` (needs a recent Node.js).
+
 ## Development
 
 ```bash
